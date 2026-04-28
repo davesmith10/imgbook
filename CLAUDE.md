@@ -122,6 +122,64 @@ Out of Scope:
 The book cover
 multi-image layouts
 
+---
+
+## Implementation
+
+### Build System
+
+CMake + pkg-config with system libraries (no vcpkg). All dependencies installed via `dnf`.
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+### Dependencies
+
+| Library | pkg-config name | Version on this system |
+|---|---|---|
+| PoDoFo | `libpodofo` | 0.9.8 (from EPEL) |
+| Little CMS 2 | `lcms2` | 2.12 |
+| libjpeg-turbo | `libjpeg` | 2.0.90 |
+
+Install: `sudo dnf install podofo-devel lcms2-devel libjpeg-turbo-devel`
+
+### CLI Flags (all implemented)
+
+```
+-f / --folder       input directory (natural sort order)
+-o / --output       output PDF path
+-p / --page-size    WxH in --units, or standard name (Letter, A4, etc.)
+-u / --units        in | mm  (3dp precision for in, 2dp for mm)
+-g / --gutter       spine margin
+-m / --margin       outer margin for scaled layout (default 0.250 in = 18 pts)
+-i / --icc-profile  CMYK ICC profile → PDF/X-3 OutputIntent
+-l / --layout       scaled | bleed
+```
+
+Tilde expansion is handled in code, so quoted paths like `"~/profiles/foo.icc"` work.
+
+### Key Implementation Decisions
+
+**podofo 0.9.x API** (not 0.10.x): uses `painter.SetPage()`, `painter.FinishPage()`,
+`img.LoadFromJpegData()`, `doc.CreatePage(PdfRect(left, bottom, width, height))`,
+and `PdfRect` takes `(left, bottom, width, height)` — not `(llx, lly, urx, ury)`.
+
+**CMYK conversion**: lcms2 transform uses `TYPE_CMYK_16_REV` (Adobe-inverted, 16-bit
+intermediate) to match libjpeg's `JCS_CMYK` convention (255 = no ink).
+Row-by-row streaming: 8-bit RGB → 16-bit RGB (×257) → 16-bit CMYK → 8-bit CMYK.
+
+**Scaled layout**: live area = page minus gutter (spine) and margin (other 3 sides).
+Image aspect-ratio preserved, centered in live area.
+
+**Bleed layout**: `--page-size` is the *trim* size. MediaBox expands by `BLEED_PTS`
+(9 pts = 0.125 in) on the 3 outer sides. TrimBox `[0 0 page_w page_h]` and
+BleedBox (= MediaBox) are written to each page dictionary.
+
+**Odd pages**: gutter left, bleed right/top/bottom.
+**Even pages**: gutter right, bleed left/top/bottom.
+
 
 	
 	
