@@ -62,6 +62,7 @@ static void usage(const char* prog) {
         "                                     Default: 0.250 in / 6.35 mm\n"
         "  -i, --icc-profile <path>           CMYK ICC profile (embedded as PDF/X-3 OutputIntent)\n"
         "  -l, --layout      scaled|bleed     Image placement mode\n"
+        "  --full-bleed                       Extend bleed to all 4 sides (spine included); only valid with -l bleed\n"
         "\n"
         "Example:\n"
         "  imgbook -f ./photos -p Letter -u in -g 0.500 -m 0.250 -l scaled -i CGATS.icc -o book.pdf\n";
@@ -101,6 +102,7 @@ Config parse_args(int argc, char** argv) {
 
     std::string folder_str, output_str, page_size_str, units_str,
                 gutter_str, margin_str, icc_str, layout_str;
+    bool full_bleed = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -120,6 +122,7 @@ Config parse_args(int argc, char** argv) {
         else if (arg == "-m" || arg == "--margin")      margin_str    = take_next("--margin");
         else if (arg == "-i" || arg == "--icc-profile") icc_str       = take_next("--icc-profile");
         else if (arg == "-l" || arg == "--layout")      layout_str    = take_next("--layout");
+        else if (arg == "--full-bleed") { full_bleed = true; }
         else if (arg == "-h" || arg == "--help") { usage(argv[0]); std::exit(0); }
         else {
             std::cerr << "Error: unknown argument '" << arg << "'\n";
@@ -227,6 +230,7 @@ Config parse_args(int argc, char** argv) {
         gutter_user * pts_per_unit,
         margin_pts,
         layout,
-        units
+        units,
+        full_bleed
     };
 }

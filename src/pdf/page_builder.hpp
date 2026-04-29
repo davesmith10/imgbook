@@ -1,9 +1,11 @@
 #pragma once
 #include "book_writer.hpp"
-#include <podofo/podofo.h>
+#include <hpdf.h>
 
 void add_page_image(
-    PoDoFo::PdfMemDocument& doc,
-    PoDoFo::PdfPage& page,
-    const PageSpec& spec
+    HPDF_Doc  pdf,
+    HPDF_Page page,
+    const PageSpec& spec,
+    double shift_x,
+    double shift_y
 );

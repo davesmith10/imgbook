@@ -54,12 +54,19 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (cfg.full_bleed && cfg.layout != Layout::Bleed) {
+        std::cerr << "Error: --full-bleed requires -l bleed.\n";
+        return 1;
+    }
+
     std::cout << "imgbook: " << infos.size() << " pages  |  "
               << cfg.page_width_pts << " x " << cfg.page_height_pts << " pts  |  "
               << "gutter " << cfg.gutter_pts << " pts  |  "
               << (cfg.layout == Layout::Scaled ? "scaled" : "bleed") << " layout";
     if (cfg.layout == Layout::Scaled)
         std::cout << "  |  margin " << cfg.margin_pts << " pts";
+    if (cfg.full_bleed)
+        std::cout << "  |  full bleed (all 4 sides)";
     std::cout << "\n";
 
     // --- Process each image ---
@@ -96,7 +103,7 @@ int main(int argc, char** argv) {
             BleedPlacement bp = bleed_placement(
                 info.width, info.height,
                 cfg.page_width_pts, cfg.page_height_pts,
-                cfg.gutter_pts, side);
+                cfg.gutter_pts, side, cfg.full_bleed);
             spec.placement    = bp.image;
             spec.media        = bp.media;
             spec.has_trim_box = true;

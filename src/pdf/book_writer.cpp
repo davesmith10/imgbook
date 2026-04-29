@@ -1,100 +1,85 @@
 #include "book_writer.hpp"
 #include "page_builder.hpp"
 
-#include <fstream>
+#include <csetjmp>
+#include <cstdio>
+#include <filesystem>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
-#include <podofo/podofo.h>
+#include <hpdf.h>
+#include <hpdf_pdfa.h>        // HPDF_PDFA_AppendOutputIntents
+#include "hpdf_box_inject.h"  // hpdf_inject_box (TrimBox / BleedBox)
 
-using namespace PoDoFo;
+namespace fs = std::filesystem;
 
-static std::vector<char> read_file(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary | std::ios::ate);
-    if (!f) throw std::runtime_error("Cannot open file: " + p.string());
-    auto sz = f.tellg();
-    f.seekg(0);
-    std::vector<char> buf(static_cast<size_t>(sz));
-    f.read(buf.data(), sz);
-    return buf;
+static thread_local jmp_buf s_jmpbuf;
+static thread_local char    s_errmsg[256];
+
+static void hpdf_err(HPDF_STATUS err, HPDF_STATUS detail, void*) {
+    std::snprintf(s_errmsg, sizeof s_errmsg,
+                  "libharu error 0x%04X detail 0x%04X",
+                  static_cast<unsigned>(err), static_cast<unsigned>(detail));
+    longjmp(s_jmpbuf, 1);
 }
 
-static void add_output_intent(PdfMemDocument& doc,
-                               const std::filesystem::path& icc_path)
+static void set_box(HPDF_Page page, const char* name,
+                    double llx, double lly, double urx, double ury)
 {
-    auto icc_bytes = read_file(icc_path);
-
-    PdfObject* icc_obj = doc.GetObjects().CreateObject();
-    icc_obj->GetDictionary().AddKey(PdfName("N"), PdfObject(static_cast<int64_t>(4)));
-    PdfMemoryInputStream icc_stream(icc_bytes.data(),
-                                    static_cast<pdf_long>(icc_bytes.size()));
-    icc_obj->GetStream()->Set(&icc_stream);
-
-    PdfDictionary oi_dict;
-    oi_dict.AddKey(PdfName("Type"),    PdfObject(PdfName("OutputIntent")));
-    oi_dict.AddKey(PdfName("S"),       PdfObject(PdfName("GTS_PDFX")));
-    oi_dict.AddKey(PdfName("OutputConditionIdentifier"),
-                   PdfObject(PdfString("Custom")));
-    oi_dict.AddKey(PdfName("Info"),    PdfObject(PdfString("CMYK ICC Profile")));
-    oi_dict.AddKey(PdfName("RegistryName"), PdfObject(PdfString("")));
-    oi_dict.AddKey(PdfName("DestOutputProfile"),
-                   PdfObject(icc_obj->Reference()));
-
-    PdfArray oi_array;
-    oi_array.push_back(PdfObject(oi_dict));
-    doc.GetCatalog()->GetDictionary().AddKey(
-        PdfName("OutputIntents"), PdfObject(oi_array));
-}
-
-static void set_metadata(PdfMemDocument& doc) {
-    doc.GetInfo()->SetCreator(PdfString("imgbook 0.1.0"));
-    doc.GetInfo()->SetProducer(PdfString("imgbook 0.1.0 / PoDoFo 0.9"));
-    doc.GetCatalog()->GetDictionary().AddKey(
-        PdfName("GTS_PDFXVersion"), PdfObject(PdfString("PDF/X-3:2002")));
-}
-
-// Adds a PDF rectangle array [llx lly urx ury] as a page box key.
-static void set_page_box(PdfPage* page, const char* key,
-                         double llx, double lly, double urx, double ury)
-{
-    PdfArray box;
-    box.push_back(PdfObject(llx));
-    box.push_back(PdfObject(lly));
-    box.push_back(PdfObject(urx));
-    box.push_back(PdfObject(ury));
-    page->GetObject()->GetDictionary().AddKey(PdfName(key), PdfObject(box));
+    hpdf_inject_box(page, name,
+                    static_cast<float>(llx), static_cast<float>(lly),
+                    static_cast<float>(urx), static_cast<float>(ury));
 }
 
 void write_book(
-    const std::filesystem::path& output_path,
-    const std::filesystem::path& icc_profile,
+    const fs::path& output_path,
+    const fs::path& icc_profile,
     const std::vector<PageSpec>& pages)
 {
-    PdfMemDocument doc;
-    doc.SetPdfVersion(ePdfVersion_1_3);
+    HPDF_Doc pdf = HPDF_New(hpdf_err, nullptr);
+    if (!pdf)
+        throw std::runtime_error("libharu: HPDF_New failed");
 
-    set_metadata(doc);
-    add_output_intent(doc, icc_profile);
+    if (setjmp(s_jmpbuf)) {
+        HPDF_Free(pdf);
+        throw std::runtime_error(s_errmsg);
+    }
+
+    HPDF_SetCompressionMode(pdf, HPDF_COMP_ALL);
+    HPDF_SetInfoAttr(pdf, HPDF_INFO_CREATOR,  "imgbook 0.1.0");
+    HPDF_SetInfoAttr(pdf, HPDF_INFO_PRODUCER, "imgbook 0.1.0 / libharu 2.3");
+
+    // Embed CMYK ICC profile as PDF OutputIntent
+    HPDF_OutputIntent intent =
+        HPDF_LoadIccProfileFromFile(pdf, icc_profile.string().c_str(), 4);
+    HPDF_PDFA_AppendOutputIntents(pdf, "Custom CMYK",
+                                  reinterpret_cast<HPDF_Dict>(intent));
 
     for (const auto& spec : pages) {
         const auto& m = spec.media;
-        PdfPage* page = doc.CreatePage(
-            PdfRect(m.left, m.bottom, m.width, m.height));
-        if (!page)
-            throw std::runtime_error("PoDoFo: failed to create page "
-                                     + std::to_string(spec.page_number));
+
+        // Shift so that all coordinates are non-negative (libharu requires (0,0) origin).
+        // media.left and media.bottom may be negative for bleed pages.
+        double shift_x = -m.left;
+        double shift_y = -m.bottom;
+
+        HPDF_Page page = HPDF_AddPage(pdf);
+        HPDF_Page_SetWidth (page, static_cast<HPDF_REAL>(m.width));
+        HPDF_Page_SetHeight(page, static_cast<HPDF_REAL>(m.height));
 
         if (spec.has_trim_box) {
-            // TrimBox: the stated (trim) page dimensions at [0,0]
-            set_page_box(page, "TrimBox", 0.0, 0.0, spec.trim_urx, spec.trim_ury);
-            // BleedBox = MediaBox (already the full bleed extent)
-            set_page_box(page, "BleedBox",
-                         m.left, m.bottom,
-                         m.left + m.width, m.bottom + m.height);
+            // TrimBox in shifted PDF user space: [shift_x, shift_y, shift_x+trim_w, shift_y+trim_h]
+            set_box(page, "TrimBox",
+                    shift_x,               shift_y,
+                    shift_x + spec.trim_urx, shift_y + spec.trim_ury);
+            // BleedBox equals the full MediaBox
+            set_box(page, "BleedBox", 0.0, 0.0, m.width, m.height);
         }
 
-        add_page_image(doc, *page, spec);
+        add_page_image(pdf, page, spec, shift_x, shift_y);
     }
 
-    doc.Write(output_path.string().c_str());
+    HPDF_SaveToFile(pdf, output_path.string().c_str());
+    HPDF_Free(pdf);
 }

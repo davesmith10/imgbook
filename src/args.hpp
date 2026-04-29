@@ -15,6 +15,7 @@ struct Config {
     double margin_pts; // outer margin (top/bottom/non-spine) for scaled layout
     Layout layout;
     Units  units;
+    bool   full_bleed = false; // extend bleed to all 4 sides (spine included)
 };
 
 // Parses argv, validates all inputs, converts measurements to PDF points.

@@ -13,9 +13,9 @@ struct PagePlacement {
     double h; // draw height in points
 };
 
-// Media box description (podofo PdfRect convention: left, bottom, width, height).
-// For scaled layout this is simply (0, 0, page_w, page_h).
-// For bleed layout the origin shifts to accommodate the bleed extension.
+// Media box: origin (left, bottom) and size (width, height), all in PDF points.
+// For scaled layout this is (0, 0, page_w, page_h).
+// For bleed layout the origin may be negative to denote bleed extension beyond the trim edge.
 struct MediaBox {
     double left   = 0.0;
     double bottom = 0.0;

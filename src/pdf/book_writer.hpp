@@ -10,7 +10,7 @@ struct PageSpec {
     int img_pixel_h;
     int page_number;                 // 1-based
     PagePlacement placement;
-    // MediaBox (podofo: left, bottom, width, height)
+    // MediaBox (left, bottom, width, height) — origin may be negative for bleed pages
     MediaBox media;
     // TrimBox — only present for bleed layout
     bool   has_trim_box = false;

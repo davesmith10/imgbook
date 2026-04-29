@@ -1,28 +1,21 @@
 #include "page_builder.hpp"
-
 #include <stdexcept>
 
-using namespace PoDoFo;
-
-void add_page_image(
-    PdfMemDocument& doc,
-    PdfPage& page,
-    const PageSpec& spec)
+void add_page_image(HPDF_Doc pdf, HPDF_Page page,
+                    const PageSpec& spec, double shift_x, double shift_y)
 {
-    PdfImage img(&doc);
-    img.LoadFromJpegData(
-        reinterpret_cast<const unsigned char*>(spec.cmyk_jpeg.data()),
-        static_cast<pdf_long>(spec.cmyk_jpeg.size()));
+    HPDF_Image img = HPDF_LoadJpegImageFromMem(
+        pdf,
+        reinterpret_cast<const HPDF_BYTE*>(spec.cmyk_jpeg.data()),
+        static_cast<HPDF_UINT>(spec.cmyk_jpeg.size()));
+    if (!img)
+        throw std::runtime_error("libharu: failed to load JPEG for page "
+                                 + std::to_string(spec.page_number));
 
-    // img.GetWidth()/GetHeight() returns the image's bounding box size in user units,
-    // which equals the pixel dimensions after LoadFromJpegData.
-    // DrawImage scale = desired_pts / natural_units.
     const auto& p = spec.placement;
-    double scale_x = p.w / img.GetWidth();
-    double scale_y = p.h / img.GetHeight();
-
-    PdfPainter painter;
-    painter.SetPage(&page);
-    painter.DrawImage(p.x, p.y, &img, scale_x, scale_y);
-    painter.FinishPage();
+    HPDF_Page_DrawImage(page, img,
+        static_cast<HPDF_REAL>(p.x + shift_x),
+        static_cast<HPDF_REAL>(p.y + shift_y),
+        static_cast<HPDF_REAL>(p.w),
+        static_cast<HPDF_REAL>(p.h));
 }

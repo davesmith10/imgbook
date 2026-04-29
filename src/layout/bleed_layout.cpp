@@ -5,32 +5,42 @@ BleedPlacement bleed_placement(
     double img_w, double img_h,
     double page_w, double page_h,
     double gutter_pts,
-    PageSide side)
+    PageSide side,
+    bool full_bleed)
 {
     const double bleed = BLEED_PTS;
 
-    // MediaBox: expand on 3 outer sides; spine side stays at its trim edge.
-    // podofo PdfRect(left, bottom, width, height).
+    // MediaBox: expand on 3 outer sides (or all 4 when full_bleed).
+    // Spine side normally stays flush at the trim edge; full_bleed extends it too.
     MediaBox media;
-    if (side == PageSide::Odd) {   // spine left, outer right
-        media.left   =  0.0;
-        media.bottom = -bleed;
-        media.width  =  page_w + bleed;
-        media.height =  page_h + 2.0 * bleed;
-    } else {                       // spine right, outer left
-        media.left   = -bleed;
-        media.bottom = -bleed;
-        media.width  =  page_w + bleed;
-        media.height =  page_h + 2.0 * bleed;
+    media.bottom = -bleed;
+    media.height =  page_h + 2.0 * bleed;
+    if (full_bleed) {
+        // All 4 sides get bleed — spine included
+        media.left  = -bleed;
+        media.width =  page_w + 2.0 * bleed;
+    } else if (side == PageSide::Odd) {   // spine left, outer right
+        media.left  =  0.0;
+        media.width =  page_w + bleed;
+    } else {                               // spine right, outer left
+        media.left  = -bleed;
+        media.width =  page_w + bleed;
     }
 
-    // Image fills the full bleed area, with gutter clearance on the spine side.
-    // area origin (in PDF user-space) and dimensions:
-    double area_x = (side == PageSide::Odd) ? gutter_pts : (media.left);
+    // Image fill area.
+    // full_bleed: cover the entire MediaBox (spine bleed included, gutter not used).
+    // 3-sided bleed: gutter determines the spine-side boundary of the fill area.
+    double area_x, area_w;
+    if (full_bleed) {
+        area_x = media.left;
+        area_w = media.width;
+    } else {
+        area_x = (side == PageSide::Odd) ? gutter_pts : media.left;
+        area_w = (side == PageSide::Odd)
+                 ? (media.left + media.width - gutter_pts)
+                 : (page_w - gutter_pts - media.left);
+    }
     double area_y = media.bottom;
-    double area_w = (side == PageSide::Odd)
-                    ? (media.left + media.width - gutter_pts)   // right bleed edge − gutter
-                    : (page_w - gutter_pts - media.left);        // trim right − gutter + left bleed
     double area_h = media.height;
 
     // Cover-scale: fill the area entirely (image may be cropped on one axis)

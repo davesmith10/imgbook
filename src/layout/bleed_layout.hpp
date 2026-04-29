@@ -13,5 +13,6 @@ BleedPlacement bleed_placement(
     double img_w, double img_h,
     double page_w, double page_h,
     double gutter_pts,
-    PageSide side
+    PageSide side,
+    bool full_bleed = false
 );

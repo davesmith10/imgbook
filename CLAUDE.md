@@ -137,13 +137,13 @@ cmake --build build
 
 ### Dependencies
 
-| Library | pkg-config name | Version on this system |
-|---|---|---|
-| PoDoFo | `libpodofo` | 0.9.8 (from EPEL) |
-| Little CMS 2 | `lcms2` | 2.12 |
-| libjpeg-turbo | `libjpeg` | 2.0.90 |
+| Library | pkg-config name | Link flag | Version on this system |
+|---|---|---|---|
+| libharu | *(no pkg-config)* | `-lhpdf` | 2.3.0 (from EPEL) |
+| Little CMS 2 | `lcms2` | via pkg-config | 2.12 |
+| libjpeg-turbo | `libjpeg` | via pkg-config | 2.0.90 |
 
-Install: `sudo dnf install podofo-devel lcms2-devel libjpeg-turbo-devel`
+Install: `sudo dnf install libharu-devel lcms2-devel libjpeg-turbo-devel`
 
 ### CLI Flags (all implemented)
 
@@ -162,9 +162,23 @@ Tilde expansion is handled in code, so quoted paths like `"~/profiles/foo.icc"` 
 
 ### Key Implementation Decisions
 
-**podofo 0.9.x API** (not 0.10.x): uses `painter.SetPage()`, `painter.FinishPage()`,
-`img.LoadFromJpegData()`, `doc.CreatePage(PdfRect(left, bottom, width, height))`,
-and `PdfRect` takes `(left, bottom, width, height)` — not `(llx, lly, urx, ury)`.
+**libharu 2.3 API**: `HPDF_New` + `HPDF_AddPage` + `HPDF_Page_SetWidth/Height` +
+`HPDF_LoadJpegImageFromMem` + `HPDF_Page_DrawImage(page, img, x, y, w, h)` where
+w/h are desired output dimensions in points (not scale factors).
+
+**OutputIntent**: `HPDF_LoadIccProfileFromFile(pdf, path, 4)` → cast to `HPDF_Dict` →
+`HPDF_PDFA_AppendOutputIntents(pdf, "Custom CMYK", dict)` (from `hpdf_pdfa.h`).
+
+**TrimBox / BleedBox**: `HPDF_Page_SetBoxValue` does NOT support custom box names.
+Instead, `src/pdf/hpdf_box_inject.c` (compiled as C, not C++) uses the internal
+`HPDF_Box_Array_New` + `HPDF_Dict_Add` API from `hpdf_objects.h`. This file must
+NOT include `hpdf.h` (typedef conflict: `HPDF_Dict` is `void*` in public headers
+but `HPDF_Dict_Rec*` in internal headers).
+
+**Bleed coordinate shift**: libharu requires all page coordinates ≥ 0. The layout
+engine may produce a MediaBox with negative `left` (even pages) or `bottom` (bleed).
+`book_writer.cpp` computes `shift_x = -media.left`, `shift_y = -media.bottom` and
+applies them to image draw coordinates. libharu page size = `media.width` × `media.height`.
 
 **CMYK conversion**: lcms2 transform uses `TYPE_CMYK_16_REV` (Adobe-inverted, 16-bit
 intermediate) to match libjpeg's `JCS_CMYK` convention (255 = no ink).
@@ -174,8 +188,8 @@ Row-by-row streaming: 8-bit RGB → 16-bit RGB (×257) → 16-bit CMYK → 8-bit
 Image aspect-ratio preserved, centered in live area.
 
 **Bleed layout**: `--page-size` is the *trim* size. MediaBox expands by `BLEED_PTS`
-(9 pts = 0.125 in) on the 3 outer sides. TrimBox `[0 0 page_w page_h]` and
-BleedBox (= MediaBox) are written to each page dictionary.
+(9 pts = 0.125 in) on the 3 outer sides. TrimBox and BleedBox (= MediaBox) are written
+to each page dictionary via `hpdf_inject_box`.
 
 **Odd pages**: gutter left, bleed right/top/bottom.
 **Even pages**: gutter right, bleed left/top/bottom.
